@@ -1,0 +1,17 @@
+[package]
+name = "cadence-crater"
+version = "0.1.0"
+authors = ["Nick Pillitteri"]
+description = "An extensible Statsd client for Rust"
+homepage = "https://github.com/56quarters/cadence-crater"
+repository = "https://github.com/56quarters/cadence-crater"
+readme = "README.md"
+license = "Apache-2.0/MIT"
+keywords = ["statsd", "metrics"]
+edition = "2018"
+
+[dependencies]
+clap = "3.0.0-beta.2"
+clap_derive = "3.0.0-beta.2"
+git2 = { version = "0.13.12", features = ["https"], default-features = false }
+toml = "0.5"
