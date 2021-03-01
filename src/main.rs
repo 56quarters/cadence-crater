@@ -6,9 +6,7 @@ use std::fmt;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use toml::value::Value;
-
-const DEFAULT_VERSION: &str = env!("CARGO_PKG_VERSION");
+use toml::value::{Table, Value};
 
 macro_rules! toml_map (
     { $($key:expr => $value:expr),+ } => {
@@ -54,54 +52,74 @@ impl FetchCommand {
 /// Patch a project's Cargo.toml
 #[derive(Debug, Clap)]
 struct PatchCommand {
+    /// Path to a local Cadence Cargo.toml
+    #[clap(long)]
+    cadence: String,
+
     /// Print Cargo.toml changes to stdout instead of modifying it
     #[clap(long)]
     stdout: bool,
 
-    /// Path to the Cargo.toml to patch
-    path: String,
+    /// Path to the root project Cargo.toml and child project Cargo.toml files.
+    /// If only a single path is given, it is used as both the root and child
+    paths: Vec<String>,
 }
 
 impl PatchCommand {
     fn run(self) -> Result<(), CraterError> {
-        let mut root = self.load_cargo_toml()?;
-        let table = root.as_table_mut().unwrap();
+        let cadence_version = local_crate_version(&self.cadence)?;
+        let cadence_path = local_crate_path(&self.cadence)?;
 
-        table
-            .get_mut("dependencies")
-            .and_then(|t| t.as_table_mut())
-            .ok_or_else(|| CraterError::Message(format!("missing or corrupt dependency section in {}", self.path)))?
-            .insert("cadence".to_owned(), Value::String(DEFAULT_VERSION.to_owned()));
+        if self.paths.len() == 1 {
+            let mut root = load_cargo_toml(&self.paths[0])?;
+            let table = root.as_table_mut().unwrap();
 
-        let our_crate = local_crate_path("cadence")?;
-        table.insert(
-            "patch".to_owned(),
-            Value::Table(toml_map!["crates-io" => Value::Table(
-                toml_map!["cadence" => Value::Table(
-                    toml_map!["path" => Value::String(our_crate)]
-                )]
-            )]),
-        );
+            self.override_patch(table, &cadence_path)?;
+            self.override_version(table, &cadence_version)?;
 
-        let contents = toml::to_string(table)?;
-        if !self.stdout {
-            self.write_cargo_toml(&contents)?;
+            let contents = toml::to_string(&root)?;
+            self.write_cargo_toml(&contents, &self.paths[0])?;
         } else {
-            println!("{}", contents);
         }
 
         Ok(())
     }
 
-    fn load_cargo_toml(&self) -> Result<Value, CraterError> {
-        let mut fd = std::fs::File::open(&self.path)?;
-        let mut buf = String::new();
-        let _ = fd.read_to_string(&mut buf)?;
-        Ok(buf.parse()?)
+    fn override_patch<S: Into<String>>(
+        &self,
+        table: &mut Table,
+        path: S,
+    ) -> Result<(), CraterError> {
+        table.insert(
+            "patch".to_owned(),
+            Value::Table(toml_map!["crates-io" => Value::Table(
+                toml_map!["cadence" => Value::Table(
+                    toml_map!["path" => Value::String(path.into())]
+                )]
+            )]),
+        );
+
+        Ok(())
     }
 
-    fn write_cargo_toml(&self, contents: &str) -> Result<(), CraterError> {
-        let tmp_path = self.tmp_path()?;
+    fn override_version<S: Into<String>>(
+        &self,
+        table: &mut Table,
+        version: S,
+    ) -> Result<(), CraterError> {
+        table
+            .get_mut("dependencies")
+            .and_then(|t| t.as_table_mut())
+            .ok_or_else(|| {
+                CraterError::Message("missing or corrupt dependency section".to_owned())
+            })?
+            .insert("cadence".to_owned(), Value::String(version.into()));
+
+        Ok(())
+    }
+
+    fn write_cargo_toml<P: AsRef<Path>>(&self, contents: &str, path: P) -> Result<(), CraterError> {
+        let tmp_path = self.tmp_path(&path)?;
         {
             let mut fd = fs::OpenOptions::new()
                 .read(false)
@@ -114,13 +132,15 @@ impl PatchCommand {
             fd.sync_all()?;
         }
 
-        Ok(fs::rename(tmp_path, &self.path)?)
+        Ok(fs::rename(tmp_path, &path)?)
     }
 
-    fn tmp_path(&self) -> Result<PathBuf, CraterError> {
-        let path = Path::new(&self.path);
+    fn tmp_path<P: AsRef<Path>>(&self, path: P) -> Result<PathBuf, CraterError> {
+        let path = path.as_ref();
         path.parent()
-            .ok_or_else(|| CraterError::Message(format!("could not determine parent of {:?}", path)))
+            .ok_or_else(|| {
+                CraterError::Message(format!("could not determine parent of {:?}", path))
+            })
             .map(|p| p.join(".cadence-rename"))
     }
 }
@@ -199,14 +219,40 @@ impl Error for CraterError {
     }
 }
 
-fn local_crate_path<P: Into<String>>(project: P) -> Result<String, CraterError> {
-    std::env::current_dir()?
-        .join("..")
-        .join(project.into())
+fn load_cargo_toml<P: AsRef<Path>>(path: P) -> Result<Value, CraterError> {
+    let mut fd = std::fs::File::open(&path)?;
+    let mut buf = String::new();
+    let _ = fd.read_to_string(&mut buf)?;
+    Ok(buf.parse()?)
+}
+
+fn local_crate_version<P: AsRef<Path> + fmt::Debug>(path: P) -> Result<String, CraterError> {
+    let root = load_cargo_toml(&path)?;
+
+    root.as_table()
+        .and_then(|v| v.get("package"))
+        .and_then(|v| v.as_table())
+        .and_then(|v| v.get("version"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_owned())
+        .ok_or_else(|| {
+            CraterError::Message(format!(
+                "unable to determine Cadence version from {:?}",
+                path
+            ))
+        })
+}
+
+fn local_crate_path<P: AsRef<Path> + fmt::Debug>(path: P) -> Result<String, CraterError> {
+    path.as_ref()
+        .parent()
+        .ok_or_else(|| CraterError::Message(format!("unable to determine parent of {:?}", path)))?
         .canonicalize()?
         .to_str()
-        .ok_or_else(|| CraterError::Message("path conversion error".to_owned()))
         .map(|s| s.to_owned())
+        .ok_or_else(|| {
+            CraterError::Message(format!("unable to normalize path to Cadence {:?}", path))
+        })
 }
 
 fn main() -> Result<(), CraterError> {
