@@ -1,6 +1,8 @@
 //
 
 use clap::{crate_version, Clap};
+use git2::Repository;
+use std::env;
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -39,13 +41,50 @@ enum SubCommand {
 /// Clone a repository
 #[derive(Debug, Clap)]
 struct FetchCommand {
+    /// Destination for repository clone (not including repository name)
+    #[clap(long)]
+    path: Option<String>,
+
+    /// URL of repository to clone
     url: String,
 }
 
 impl FetchCommand {
     fn run(self) -> Result<(), CraterError> {
-        println!("FETCH: {:?}", self);
+        let into = self
+            .path
+            .as_ref()
+            .map(|s| PathBuf::from(s))
+            .unwrap_or_else(|| env::temp_dir())
+            .canonicalize()?;
+
+        let full = into.join(self.proj_name()?);
+        let _repo = match Repository::clone(&self.url, &full) {
+            Err(e) => {
+                if e.code() == git2::ErrorCode::Exists {
+                    Ok(Repository::open(&full)?)
+                } else {
+                    Err(e)
+                }
+            }
+            Ok(r) => Ok(r),
+        }?;
+
+        println!("{}", full.as_os_str().to_str().unwrap());
         Ok(())
+    }
+
+    fn proj_name(&self) -> Result<String, CraterError> {
+        PathBuf::from(&self.url)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_owned())
+            .ok_or_else(|| {
+                CraterError::Message(format!(
+                    "unable to determine project name from {:?}",
+                    self.path
+                ))
+            })
     }
 }
 
@@ -175,10 +214,17 @@ impl TestCommand {
 
 #[derive(Debug)]
 enum CraterError {
+    VcsError(git2::Error),
     DeserializeError(toml::de::Error),
     SerializeError(toml::ser::Error),
     IoError(io::Error),
     Message(String),
+}
+
+impl From<git2::Error> for CraterError {
+    fn from(e: git2::Error) -> Self {
+        CraterError::VcsError(e)
+    }
 }
 
 impl From<io::Error> for CraterError {
@@ -202,6 +248,7 @@ impl From<toml::ser::Error> for CraterError {
 impl fmt::Display for CraterError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            CraterError::VcsError(ref e) => e.fmt(f),
             CraterError::DeserializeError(ref e) => e.fmt(f),
             CraterError::SerializeError(ref e) => e.fmt(f),
             CraterError::IoError(ref e) => e.fmt(f),
@@ -213,6 +260,7 @@ impl fmt::Display for CraterError {
 impl Error for CraterError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            CraterError::VcsError(ref e) => Some(e),
             CraterError::DeserializeError(ref e) => Some(e),
             CraterError::SerializeError(ref e) => Some(e),
             CraterError::IoError(ref e) => Some(e),
