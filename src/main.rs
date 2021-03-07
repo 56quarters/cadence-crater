@@ -118,6 +118,7 @@ impl PatchCommand {
         Ok(())
     }
 
+    /// Write the given TOML file contents to a path, using a temporary file and rename
     fn write_cargo_toml<P: AsRef<Path>>(&self, contents: &str, path: P) -> Result<(), CraterError> {
         let tmp_path = self.tmp_path(&path)?;
         {
@@ -135,6 +136,7 @@ impl PatchCommand {
         Ok(fs::rename(tmp_path, &path)?)
     }
 
+    /// Get a temporary name for a file in the same directory as the given path
     fn tmp_path<P: AsRef<Path>>(&self, path: P) -> Result<PathBuf, CraterError> {
         let path = path.as_ref();
         path.parent()
@@ -219,13 +221,15 @@ impl Error for CraterError {
     }
 }
 
+/// Load and parse the contents of a Cargo.toml file
 fn load_cargo_toml<P: AsRef<Path>>(path: P) -> Result<Value, CraterError> {
-    let mut fd = std::fs::File::open(&path)?;
+    let mut fd = fs::File::open(&path)?;
     let mut buf = String::new();
     let _ = fd.read_to_string(&mut buf)?;
     Ok(buf.parse()?)
 }
 
+/// Get the version of a local crate based on the path to its Cargo.toml file
 fn local_crate_version<P: AsRef<Path> + fmt::Debug>(path: P) -> Result<String, CraterError> {
     let root = load_cargo_toml(&path)?;
 
@@ -243,6 +247,7 @@ fn local_crate_version<P: AsRef<Path> + fmt::Debug>(path: P) -> Result<String, C
         })
 }
 
+/// Get the path of a crate as a string based on the path to its Cargo.toml file
 fn local_crate_path<P: AsRef<Path> + fmt::Debug>(path: P) -> Result<String, CraterError> {
     path.as_ref()
         .parent()
