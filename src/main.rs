@@ -70,6 +70,7 @@ impl FetchCommand {
             Ok(r) => Ok(r),
         }?;
 
+        // All project names should be valid utf-8, if not, crashing is fine
         println!("{}", full.as_os_str().to_str().unwrap());
         Ok(())
     }
@@ -108,27 +109,45 @@ impl PatchCommand {
     fn run(self) -> Result<(), CraterError> {
         let cadence_version = local_crate_version(&self.cadence)?;
         let cadence_path = local_crate_path(&self.cadence)?;
+        let root_toml = &self.paths[0];
+        let proj_tomls = &self.paths[1..];
 
-        if self.paths.len() == 1 {
-            let mut root = load_cargo_toml(&self.paths[0])?;
-            let table = root.as_table_mut().unwrap();
+        let mut root = load_cargo_toml(root_toml)?;
+        let root_table = root.as_table_mut().unwrap();
+        self.override_patch(root_table, &cadence_path)?;
 
-            self.override_patch(table, &cadence_path)?;
-            self.override_version(table, &cadence_version)?;
-
-            let contents = toml::to_string(&root)?;
-            self.write_cargo_toml(&contents, &self.paths[0])?;
+        if proj_tomls.is_empty() {
+            self.override_version(root_table, &cadence_version)?;
         } else {
+            for proj_toml in proj_tomls {
+                self.rewrite_version(proj_toml, &cadence_version)?;
+            }
         }
+
+        let contents = toml::to_string(&root)?;
+        self.write_cargo_toml(&contents, &self.paths[0])?;
 
         Ok(())
     }
 
-    fn override_patch<S: Into<String>>(
-        &self,
-        table: &mut Table,
-        path: S,
-    ) -> Result<(), CraterError> {
+    /// Change the version of Cadence required and rewrite the Cargo.toml file at the given path
+    fn rewrite_version<P, S>(&self, path: P, version: S) -> Result<(), CraterError>
+    where
+        P: AsRef<Path>,
+        S: Into<String>,
+    {
+        let mut root = load_cargo_toml(&path)?;
+        let table = root.as_table_mut().unwrap();
+        self.override_version(table, version)?;
+        let contents = toml::to_string(&root)?;
+        self.write_cargo_toml(&contents, &path)
+    }
+
+    /// Change Cadence dependencies to a local checkout for the given Cargo.toml structure
+    fn override_patch<S>(&self, table: &mut Table, path: S) -> Result<(), CraterError>
+    where
+        S: Into<String>,
+    {
         table.insert(
             "patch".to_owned(),
             Value::Table(toml_map!["crates-io" => Value::Table(
@@ -141,11 +160,11 @@ impl PatchCommand {
         Ok(())
     }
 
-    fn override_version<S: Into<String>>(
-        &self,
-        table: &mut Table,
-        version: S,
-    ) -> Result<(), CraterError> {
+    /// Change the version of Cadence required for the given Cargo.toml structure
+    fn override_version<S>(&self, table: &mut Table, version: S) -> Result<(), CraterError>
+    where
+        S: Into<String>,
+    {
         table
             .get_mut("dependencies")
             .and_then(|t| t.as_table_mut())
@@ -158,7 +177,10 @@ impl PatchCommand {
     }
 
     /// Write the given TOML file contents to a path, using a temporary file and rename
-    fn write_cargo_toml<P: AsRef<Path>>(&self, contents: &str, path: P) -> Result<(), CraterError> {
+    fn write_cargo_toml<P>(&self, contents: &str, path: P) -> Result<(), CraterError>
+    where
+        P: AsRef<Path>,
+    {
         let tmp_path = self.tmp_path(&path)?;
         {
             let mut fd = fs::OpenOptions::new()
@@ -176,7 +198,10 @@ impl PatchCommand {
     }
 
     /// Get a temporary name for a file in the same directory as the given path
-    fn tmp_path<P: AsRef<Path>>(&self, path: P) -> Result<PathBuf, CraterError> {
+    fn tmp_path<P>(&self, path: P) -> Result<PathBuf, CraterError>
+    where
+        P: AsRef<Path>,
+    {
         let path = path.as_ref();
         path.parent()
             .ok_or_else(|| {
@@ -308,13 +333,17 @@ fn local_crate_path<P: AsRef<Path> + fmt::Debug>(path: P) -> Result<String, Crat
         })
 }
 
-fn main() -> Result<(), CraterError> {
+fn main() {
     let opts = CraterOptions::parse();
 
-    match opts.mode {
+    let res = match opts.mode {
         SubCommand::Fetch(cmd) => cmd.run(),
         SubCommand::Patch(cmd) => cmd.run(),
         SubCommand::Build(cmd) => cmd.run(),
         SubCommand::Test(cmd) => cmd.run(),
+    };
+
+    if let Err(e) = res {
+        eprintln!("cadence-crater: {}", e);
     }
 }
