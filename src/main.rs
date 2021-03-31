@@ -34,8 +34,6 @@ struct CraterOptions {
 enum SubCommand {
     Fetch(FetchCommand),
     Patch(PatchCommand),
-    Build(BuildCommand),
-    Test(TestCommand),
 }
 
 /// Clone a repository
@@ -211,32 +209,6 @@ impl PatchCommand {
     }
 }
 
-/// Build a project
-#[derive(Debug, Clap)]
-struct BuildCommand {
-    path: String,
-}
-
-impl BuildCommand {
-    fn run(self) -> Result<(), CraterError> {
-        println!("BUILD: {:?}", self);
-        Ok(())
-    }
-}
-
-/// Test a project
-#[derive(Debug, Clap)]
-struct TestCommand {
-    path: String,
-}
-
-impl TestCommand {
-    fn run(self) -> Result<(), CraterError> {
-        println!("TEST: {:?}", self);
-        Ok(())
-    }
-}
-
 #[derive(Debug)]
 enum CraterError {
     VcsError(git2::Error),
@@ -339,8 +311,6 @@ fn main() {
     let res = match opts.mode {
         SubCommand::Fetch(cmd) => cmd.run(),
         SubCommand::Patch(cmd) => cmd.run(),
-        SubCommand::Build(cmd) => cmd.run(),
-        SubCommand::Test(cmd) => cmd.run(),
     };
 
     if let Err(e) = res {
