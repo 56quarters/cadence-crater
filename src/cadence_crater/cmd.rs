@@ -55,9 +55,7 @@ impl CraterApplication {
         fs::create_dir_all(&dest)
             .map(|_| dest)
             .and_then(|p| p.canonicalize())
-            .map_err(|e| {
-                CraterError::new(format!("unable to determine repository destination: {}", e))
-            })
+            .map_err(|e| CraterError::new_err("unable to determine repository destination", e))
     }
 
     fn config(&self) -> Result<RunConfig, CraterError> {
@@ -66,17 +64,17 @@ impl CraterApplication {
         let _ = fs::File::open(&self.config)
             .and_then(|mut fd| fd.read_to_string(&mut buf))
             .map_err(|e| {
-                CraterError::new(format!(
-                    "unable to open configuration from {:?}: {}",
-                    self.config, e
-                ))
+                CraterError::new_err(
+                    format!("unable to open configuration from {:?}", self.config),
+                    e,
+                )
             })?;
 
         toml::from_str(&buf).map_err(|e| {
-            CraterError::new(format!(
-                "unable to parse configuration from {:?}: {}",
-                self.config, e
-            ))
+            CraterError::new_err(
+                format!("unable to parse configuration from {:?}", self.config),
+                e,
+            )
         })
     }
 }
