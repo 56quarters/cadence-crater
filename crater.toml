@@ -17,3 +17,8 @@ subprojects = []
 repo = "https://github.com/mozilla/classify-client.git"
 root = ""
 subprojects = []
+
+[[projects]]
+repo = "https://github.com/mozilla-services/autopush-rs.git"
+root = ""
+subprojects = ["autopush", "autoendpoint", "autopush-common"]
